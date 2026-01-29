@@ -17,6 +17,7 @@ function fmtDateTime(iso: string): string {
 
 export default function Home() {
   const [stateInput, setStateInput] = useState("CA");
+  const [aboutYou, setAboutYou] = useState("");
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
 
   const [loading, setLoading] = useState(false);
@@ -37,7 +38,7 @@ export default function Home() {
       const res = await fetch("/api/events", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ state }),
+        body: JSON.stringify({ state, userProfile: aboutYou.trim() }),
       });
       const json = (await res.json()) as any;
       if (!res.ok) {
@@ -94,104 +95,85 @@ export default function Home() {
   }
 
   return (
-    <main style={{ width: "100%", margin: "32px 0", padding: 16 }}>
-      <h1 style={{ fontSize: 18, marginBottom: 8 }}>Exa Event Finder</h1>
-      <p style={{ opacity: 0.8, marginBottom: 16 }}>
-        Book fairs, comic cons, and related conventions in your state (next 6 months).
-      </p>
+    <main className="app">
+      <section className="card" style={{ padding: 16 }}>
+        <div className="header">
+          <div>
+            <h1 className="title">Exa Event Finder</h1>
+            <p className="subtitle">
+              Book fairs, comic cons, and related conventions in your state (next 6 months).
+            </p>
+          </div>
+        </div>
 
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span style={{ fontSize: 12, opacity: 0.8 }}>State</span>
+        <div className="controls">
+          <label className="label">
+            <span>State</span>
           <input
+            className="input"
             value={stateInput}
             onChange={(e) => setStateInput(e.target.value)}
             placeholder="e.g. CA or California"
-            style={{
-              padding: "8px 10px",
-              border: "1px solid rgba(127,127,127,0.4)",
-              borderRadius: 6,
-              minWidth: 220,
-            }}
           />
-        </label>
+          </label>
 
-        <button
-          onClick={() => refreshNow()}
-          disabled={!stateTrimmed || loading}
-          style={{
-            padding: "8px 12px",
-            borderRadius: 6,
-            border: "1px solid rgba(127,127,127,0.4)",
-            background: loading ? "rgba(127,127,127,0.15)" : "transparent",
-            cursor: loading ? "default" : "pointer",
-          }}
-        >
-          {loading ? "Refreshing…" : "Refresh now"}
-        </button>
+          <button onClick={() => refreshNow()} disabled={!stateTrimmed || loading} className="btn btnPrimary">
+            {loading ? "Refreshing…" : "Refresh now"}
+          </button>
 
-        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <label className="label" style={{ textTransform: "none", letterSpacing: "normal" }}>
           <input
             type="checkbox"
             checked={autoRefreshEnabled}
             onChange={(e) => setAutoRefreshEnabled(e.target.checked)}
           />
-          <span style={{ fontSize: 12, opacity: 0.8 }}>Auto-refresh (every 2 days, while open)</span>
-        </label>
-      </div>
+            <span style={{ color: "var(--muted)", fontWeight: 700 }}>
+              Auto-refresh (every 2 days, while open)
+            </span>
+          </label>
+        </div>
+
+        <div style={{ marginTop: 14 }}>
+          <div className="label" style={{ marginBottom: 8 }}>
+            About you (for relevance scoring)
+          </div>
+          <textarea
+            className="textarea"
+            value={aboutYou}
+            onChange={(e) => setAboutYou(e.target.value)}
+            placeholder='Example: "I have two kids under 10, love horror novels, prefer weekend events, and I’m in the Bay Area. I don’t like anime."'
+          />
+        </div>
 
       {error ? (
-        <div style={{ marginTop: 12, color: "crimson" }}>{error}</div>
+        <div className="error">{error}</div>
       ) : data ? (
-        <div style={{ marginTop: 12, fontSize: 12, opacity: 0.8 }}>
+        <div className="statusLine">
           Fetched {fmtDateTime(data.fetchedAt)} for <b>{data.state}</b>. {events.length} events.
+          {data.debug ? (
+            <div style={{ marginTop: 6 }}>
+              Debug: {data.debug.searchResults} search results → {data.debug.extracted} extracted →{" "}
+              {data.debug.kept} kept.
+            </div>
+          ) : null}
         </div>
       ) : (
-        <div style={{ marginTop: 12, fontSize: 12, opacity: 0.8 }}>
+        <div className="statusLine">
           Enter a state and press <b>Refresh now</b>.
         </div>
       )}
 
-      <div style={{ marginTop: 16, overflowX: "auto" }}>
-        <table className="eventsTable" style={{ borderCollapse: "collapse", minWidth: 720 }}>
+        <div className="tableWrap">
+          <table className="eventsTable">
           <thead>
             <tr>
-              <th
-                scope="col"
-                style={{
-                  textAlign: "left",
-                  fontSize: 12,
-                  opacity: 0.8,
-                  padding: "10px 8px",
-                  borderBottom: "1px solid rgba(127,127,127,0.35)",
-                  whiteSpace: "nowrap",
-                }}
-              >
+              <th scope="col" style={{ whiteSpace: "nowrap" }}>
                 Date
               </th>
-              <th
-                scope="col"
-                style={{
-                  textAlign: "left",
-                  fontSize: 12,
-                  opacity: 0.8,
-                  padding: "10px 8px",
-                  borderBottom: "1px solid rgba(127,127,127,0.35)",
-                }}
-              >
-                Event Name
-              </th>
-              <th
-                scope="col"
-                style={{
-                  textAlign: "left",
-                  fontSize: 12,
-                  opacity: 0.8,
-                  padding: "10px 8px",
-                  borderBottom: "1px solid rgba(127,127,127,0.35)",
-                }}
-              >
-                Address
+              <th scope="col">Event Name</th>
+              <th scope="col">Address</th>
+              <th scope="col" style={{ whiteSpace: "nowrap" }}>
+                For me
               </th>
             </tr>
           </thead>
@@ -214,56 +196,44 @@ export default function Home() {
                 >
                   <td
                     style={{
-                      padding: "10px 8px",
-                      borderBottom: "1px solid rgba(127,127,127,0.2)",
-                      fontSize: 13,
                       whiteSpace: "nowrap",
-                      verticalAlign: "top",
                     }}
                   >
                     {formatDateRange(e)}
                   </td>
-                  <td
-                    style={{
-                      padding: "10px 8px",
-                      borderBottom: "1px solid rgba(127,127,127,0.2)",
-                      fontSize: 13,
-                      verticalAlign: "top",
-                    }}
-                  >
+                  <td>
                     <a
                       href={e.sourceUrl}
                       target="_blank"
                       rel="noreferrer"
-                      style={{ textDecoration: "underline", textUnderlineOffset: 2 }}
+                      style={{
+                        textDecoration: "underline",
+                        textUnderlineOffset: 3,
+                        fontWeight: 900,
+                      }}
                       title={e.summary}
                       onClick={(ev) => ev.stopPropagation()}
                     >
                       {e.name}
                     </a>
                   </td>
-                  <td
-                    style={{
-                      padding: "10px 8px",
-                      borderBottom: "1px solid rgba(127,127,127,0.2)",
-                      fontSize: 13,
-                      verticalAlign: "top",
-                    }}
-                  >
-                    {e.location}
+                  <td>{e.location}</td>
+                  <td style={{ whiteSpace: "nowrap", fontWeight: 900 }}>
+                    {typeof e.relevance === "number" ? `${e.relevance}/10` : "—"}
                   </td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td colSpan={3} style={{ padding: "12px 8px", fontSize: 13, opacity: 0.8 }}>
+                <td colSpan={4} style={{ padding: "12px 10px", color: "var(--muted)" }}>
                   No events yet. Enter a state and press <b>Refresh now</b>.
                 </td>
               </tr>
             )}
           </tbody>
         </table>
-      </div>
+        </div>
+      </section>
     </main>
   );
 }
