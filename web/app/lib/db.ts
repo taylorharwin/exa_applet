@@ -7,8 +7,8 @@ declare global {
 
 function getDatabaseUrl(): string {
   // Support common Postgres env var names (Vercel/Neon/etc).
+  // Prefer non-pooling URLs when available (more reliable for local dev).
   return (
-    // Prefer non-pooling URLs when available (more reliable for local dev).
     process.env.DATABASE_URL_UNPOOLED ||
     process.env.DATABASE_URL ||
     process.env.POSTGRES_URL ||
@@ -29,7 +29,7 @@ export function getSql(): Sql | null {
         max: 1,
         idle_timeout: 20,
         connect_timeout: 10,
-        // Neon/Vercel Postgres generally requires SSL; this form is supported by postgres.js.
+        // Neon/Vercel Postgres generally requires SSL.
         ssl: { rejectUnauthorized: false },
         // Required for pgBouncer/Neon pooler; prevents ECONNRESET and protocol issues.
         prepare: false,
