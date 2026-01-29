@@ -4,8 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { EventItem, EventsResponse } from "@/app/lib/types";
 
-const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
-
 function formatDateRange(e: EventItem): string {
   return e.endDate && e.endDate !== e.startDate ? `${e.startDate} → ${e.endDate}` : e.startDate;
 }
@@ -17,18 +15,16 @@ function fmtDateTime(iso: string): string {
 
 export default function Home() {
   const [stateInput, setStateInput] = useState("CA");
-  const [aboutYou, setAboutYou] = useState("");
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<EventsResponse | null>(null);
 
-  const timerRef = useRef<number | null>(null);
+  const didInitialFetchRef = useRef(false);
 
   const stateTrimmed = useMemo(() => stateInput.trim(), [stateInput]);
 
-  async function refreshNow() {
+  async function refreshNow(opts?: { forceRefresh?: boolean }) {
     const state = stateTrimmed;
     if (!state) return;
 
@@ -38,7 +34,10 @@ export default function Home() {
       const res = await fetch("/api/events", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ state, userProfile: aboutYou.trim() }),
+        body: JSON.stringify({
+          state,
+          forceRefresh: Boolean(opts?.forceRefresh),
+        }),
       });
       const json = (await res.json()) as any;
       if (!res.ok) {
@@ -52,47 +51,17 @@ export default function Home() {
     }
   }
 
-  function clearTimer() {
-    if (timerRef.current) {
-      window.clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-  }
-
-  function scheduleNext() {
-    clearTimer();
-    if (!autoRefreshEnabled) return;
+  useEffect(() => {
+    // Fetch once on initial load (shows cached results if available).
+    // Guard against React strict mode double-invoking effects in dev.
+    if (didInitialFetchRef.current) return;
+    didInitialFetchRef.current = true;
     if (!stateTrimmed) return;
-    if (document.visibilityState !== "visible") return;
-
-    timerRef.current = window.setTimeout(() => {
-      refreshNow();
-    }, TWO_DAYS_MS);
-  }
-
-  useEffect(() => {
-    scheduleNext();
+    refreshNow();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoRefreshEnabled, stateTrimmed]);
-
-  useEffect(() => {
-    function onVis() {
-      scheduleNext();
-    }
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      document.removeEventListener("visibilitychange", onVis);
-      clearTimer();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoRefreshEnabled, stateTrimmed]);
+  }, []);
 
   const events = data?.events ?? [];
-
-  function openEvent(url: string) {
-    // Keep consistent with the "Event Name" link behavior: open in a new tab.
-    window.open(url, "_blank", "noopener,noreferrer");
-  }
 
   return (
     <main className="app">
@@ -117,32 +86,13 @@ export default function Home() {
           />
           </label>
 
-          <button onClick={() => refreshNow()} disabled={!stateTrimmed || loading} className="btn btnPrimary">
+          <button
+            onClick={() => refreshNow({ forceRefresh: true })}
+            disabled={!stateTrimmed || loading}
+            className="btn btnPrimary"
+          >
             {loading ? "Refreshing…" : "Refresh now"}
           </button>
-
-          <label className="label" style={{ textTransform: "none", letterSpacing: "normal" }}>
-          <input
-            type="checkbox"
-            checked={autoRefreshEnabled}
-            onChange={(e) => setAutoRefreshEnabled(e.target.checked)}
-          />
-            <span style={{ color: "var(--muted)", fontWeight: 700 }}>
-              Auto-refresh (every 2 days, while open)
-            </span>
-          </label>
-        </div>
-
-        <div style={{ marginTop: 14 }}>
-          <div className="label" style={{ marginBottom: 8 }}>
-            About you (for relevance scoring)
-          </div>
-          <textarea
-            className="textarea"
-            value={aboutYou}
-            onChange={(e) => setAboutYou(e.target.value)}
-            placeholder='Example: "I have two kids under 10, love horror novels, prefer weekend events, and I’m in the Bay Area. I don’t like anime."'
-          />
         </div>
 
       {error ? (
@@ -150,10 +100,13 @@ export default function Home() {
       ) : data ? (
         <div className="statusLine">
           Fetched {fmtDateTime(data.fetchedAt)} for <b>{data.state}</b>. {events.length} events.
-          {data.debug ? (
+          {data.debug && typeof data.debug === "object" ? (
             <div style={{ marginTop: 6 }}>
-              Debug: {data.debug.searchResults} search results → {data.debug.extracted} extracted →{" "}
-              {data.debug.kept} kept.
+              Debug:{" "}
+              {Object.entries(data.debug as Record<string, unknown>)
+                .slice(0, 6)
+                .map(([k, v]) => `${k}=${String(v)}`)
+                .join(" · ")}
             </div>
           ) : null}
         </div>
@@ -163,75 +116,45 @@ export default function Home() {
         </div>
       )}
 
-        <div className="tableWrap">
-          <table className="eventsTable">
-          <thead>
-            <tr>
-              <th scope="col" style={{ whiteSpace: "nowrap" }}>
-                Date
-              </th>
-              <th scope="col">Event Name</th>
-              <th scope="col">Address</th>
-              <th scope="col" style={{ whiteSpace: "nowrap" }}>
-                For me
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {events.length ? (
-              events.map((e, idx) => (
-                <tr
-                  key={`${e.sourceUrl}-${idx}`}
-                  className="eventsTableRowLink"
-                  role="link"
-                  tabIndex={0}
-                  aria-label={`Open ${e.name}`}
-                  onClick={() => openEvent(e.sourceUrl)}
-                  onKeyDown={(ev) => {
-                    if (ev.key === "Enter" || ev.key === " ") {
-                      ev.preventDefault();
-                      openEvent(e.sourceUrl);
-                    }
-                  }}
-                >
-                  <td
-                    style={{
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {formatDateRange(e)}
-                  </td>
-                  <td>
-                    <a
-                      href={e.sourceUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{
-                        textDecoration: "underline",
-                        textUnderlineOffset: 3,
-                        fontWeight: 900,
-                      }}
-                      title={e.summary}
-                      onClick={(ev) => ev.stopPropagation()}
-                    >
-                      {e.name}
-                    </a>
-                  </td>
-                  <td>{e.location}</td>
-                  <td style={{ whiteSpace: "nowrap", fontWeight: 900 }}>
-                    {typeof e.relevance === "number" ? `${e.relevance}/10` : "—"}
-                  </td>
-                </tr>
-              ))
-            ) : (
-              <tr>
-                <td colSpan={4} style={{ padding: "12px 10px", color: "var(--muted)" }}>
-                  No events yet. Enter a state and press <b>Refresh now</b>.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+        <div className="cardsGrid">
+          {events.length ? (
+            events.map((e, idx) => (
+              <a
+                key={`${e.sourceUrl}-${idx}`}
+                className="eventCard"
+                href={e.sourceUrl}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={`Open ${e.name}`}
+              >
+                <div className="eventCardHeader">
+                  <div className="eventCardTitle">{e.name}</div>
+                  <div className="eventCardDate">{formatDateRange(e)}</div>
+                </div>
+
+                {e.imageUrl ? (
+                  <div className="eventCardImageWrap">
+                    <img
+                      className="eventCardImage"
+                      src={e.imageUrl}
+                      alt=""
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                ) : null}
+
+                <div className="eventCardBody">
+                  <div className="eventCardSummary">{e.summary}</div>
+                  <div className="eventCardMeta">{e.location}</div>
+                </div>
+              </a>
+            ))
+          ) : (
+            <div className="statusLine" style={{ marginTop: 0 }}>
+              No events yet. Enter a state and press <b>Refresh now</b>.
+            </div>
+          )}
         </div>
       </section>
     </main>

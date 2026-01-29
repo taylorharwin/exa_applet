@@ -6,7 +6,7 @@ export type EventItem = {
   targetAudience: string;
   summary: string;
   sourceUrl: string;
-  relevance?: number; // 1-10, personalized to userProfile if provided
+  imageUrl?: string;
 };
 
 export type EventsResponse = {
@@ -14,9 +14,6 @@ export type EventsResponse = {
   fetchedAt: string; // ISO date-time
   events: EventItem[];
   debug?: {
-    query: string;
-    searchResults: number;
-    extracted: number;
-    kept: number;
+    [key: string]: unknown;
   };
 };

@@ -2,8 +2,10 @@ import Exa from "exa-js";
 import { NextResponse } from "next/server";
 
 import type { EventItem } from "@/app/lib/types";
+import { ensureEventsTable, getSql } from "@/app/lib/db";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 type SearchAndContentsOptions = Parameters<Exa["searchAndContents"]>[1];
 
@@ -14,6 +16,8 @@ type SearchResultLike = {
   text?: unknown;
   highlights?: unknown;
   summary?: unknown;
+  image?: unknown;
+  favicon?: unknown;
 };
 
 function addMonths(d: Date, months: number): Date {
@@ -156,6 +160,7 @@ function normalizeEvent(e: EventItem): EventItem | null {
   const targetAudienceRaw = (e.targetAudience ?? "").trim();
   const summaryRaw = (e.summary ?? "").trim();
   const sourceUrl = (e.sourceUrl ?? "").trim();
+  const imageUrlRaw = ((e as unknown as { imageUrl?: unknown })?.imageUrl ?? "") as unknown;
 
   if (!name || !sourceUrl) return null;
 
@@ -169,6 +174,12 @@ function normalizeEvent(e: EventItem): EventItem | null {
   const location = locationRaw || "See source for address.";
   const targetAudience = targetAudienceRaw || "all ages";
   const summary = summaryRaw || "See source for details.";
+  const imageUrl = (() => {
+    const s = typeof imageUrlRaw === "string" ? imageUrlRaw.trim() : "";
+    if (!s) return undefined;
+    if (!/^https?:\/\//i.test(s)) return undefined;
+    return s;
+  })();
 
   return {
     name,
@@ -178,24 +189,17 @@ function normalizeEvent(e: EventItem): EventItem | null {
     targetAudience,
     summary,
     sourceUrl,
+    ...(imageUrl ? { imageUrl } : {}),
   };
 }
 
 export async function POST(req: Request) {
-  const apiKey = process.env.EXA_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: "Missing EXA_API_KEY. Add it to web/.env.local." },
-      { status: 500 },
-    );
-  }
-
   let stateRaw: unknown;
-  let userProfileRaw: unknown;
+  let forceRefreshRaw: unknown;
   try {
-    const body = (await req.json()) as { state?: unknown; userProfile?: unknown };
+    const body = (await req.json()) as { state?: unknown; forceRefresh?: unknown };
     stateRaw = body.state;
-    userProfileRaw = body.userProfile;
+    forceRefreshRaw = body.forceRefresh;
   } catch {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
@@ -205,11 +209,120 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "State is required." }, { status: 400 });
   }
 
-  const userProfile = String(userProfileRaw ?? "").trim().slice(0, 1200);
+  const forceRefresh =
+    forceRefreshRaw === true ||
+    forceRefreshRaw === "true" ||
+    forceRefreshRaw === 1 ||
+    forceRefreshRaw === "1";
 
   const now = new Date();
   const startWindow = toDateOnly(now);
   const endWindow = toDateOnly(addMonths(now, 6));
+
+  const sql = getSql();
+  const dbUrlPresent = Boolean(
+    process.env.DATABASE_URL ||
+      process.env.POSTGRES_URL ||
+      process.env.POSTGRES_PRISMA_URL ||
+      process.env.POSTGRES_URL_NON_POOLING,
+  );
+  let dbReadError: string | null = null;
+  let dbWriteError: string | null = null;
+  let dbInitError: string | null = null;
+
+  if (!sql && dbUrlPresent) {
+    dbInitError = "DB client failed to initialize (check DATABASE_URL/SSL settings).";
+  }
+
+  if (sql) {
+    try {
+      await ensureEventsTable(sql);
+      if (!forceRefresh) {
+        const rows = await sql/* sql */ `
+          SELECT
+            name,
+            start_date,
+            end_date,
+            location,
+            target_audience,
+            summary,
+            source_url,
+            image_url,
+            MAX(last_seen_at) OVER () AS max_seen
+          FROM events
+          WHERE state = ${state}
+            AND start_date >= ${startWindow}
+            AND start_date <= ${endWindow}
+          ORDER BY start_date ASC, name ASC
+          LIMIT 200
+        `;
+
+        if (Array.isArray(rows) && rows.length) {
+          const maxSeen =
+            rows[0]?.max_seen instanceof Date ? rows[0].max_seen.toISOString() : new Date().toISOString();
+
+          const storedEvents: EventItem[] = rows
+            .map((rUnknown) => {
+              const r = (rUnknown && typeof rUnknown === "object" ? (rUnknown as Record<string, unknown>) : {}) as Record<
+                string,
+                unknown
+              >;
+              return {
+                name: String(r.name ?? "").trim(),
+                startDate: r.start_date instanceof Date ? toDateOnly(r.start_date) : String(r.start_date ?? ""),
+                ...(r.end_date
+                  ? { endDate: r.end_date instanceof Date ? toDateOnly(r.end_date) : String(r.end_date) }
+                  : {}),
+                location: String(r.location ?? "").trim(),
+                targetAudience: String(r.target_audience ?? "").trim(),
+                summary: String(r.summary ?? "").trim(),
+                sourceUrl: String(r.source_url ?? "").trim(),
+                ...(typeof r.image_url === "string" && r.image_url ? { imageUrl: r.image_url } : {}),
+              };
+            })
+            .map(normalizeEvent)
+            .filter((e): e is EventItem => Boolean(e))
+            .sort(sortByStartDateAsc);
+
+          return NextResponse.json(
+            {
+              state,
+              fetchedAt: maxSeen,
+              events: storedEvents,
+              ...(process.env.NODE_ENV !== "production"
+                ? {
+                    debug: {
+                      source: "db",
+                      forceRefresh,
+                      returned: storedEvents.length,
+                      ...(dbInitError ? { dbInitError } : {}),
+                    },
+                  }
+                : {}),
+            },
+            { headers: { "cache-control": "no-store" } },
+          );
+        }
+      }
+    } catch (err: unknown) {
+      dbReadError = err instanceof Error ? err.message : String(err);
+      // If DB read fails, fall back to live search.
+    }
+  }
+
+  // If we reach here, we need to fetch (either forceRefresh, or DB had nothing).
+  const apiKey = process.env.EXA_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json(
+      {
+        error: "Missing EXA_API_KEY. Add it to web/.env.local or Vercel env vars.",
+        ...(process.env.NODE_ENV !== "production"
+          ? { debug: { ...(dbInitError ? { dbInitError } : {}), ...(dbReadError ? { dbReadError } : {}) } }
+          : {}),
+      },
+      { status: 500 },
+    );
+  }
 
   const exa = new Exa(apiKey);
 
@@ -348,6 +461,13 @@ export async function POST(req: Request) {
       "See source for details.";
 
     const sourceUrl = String(r.url ?? r.id ?? "").trim();
+    const imageUrl = (() => {
+      const img = typeof r.image === "string" ? r.image.trim() : "";
+      if (img && /^https?:\/\//i.test(img)) return img;
+      const fav = typeof r.favicon === "string" ? r.favicon.trim() : "";
+      if (fav && /^https?:\/\//i.test(fav)) return fav;
+      return "";
+    })();
 
     return {
       name,
@@ -357,6 +477,7 @@ export async function POST(req: Request) {
       targetAudience,
       summary,
       sourceUrl,
+      ...(imageUrl ? { imageUrl } : {}),
     };
   });
 
@@ -369,111 +490,39 @@ export async function POST(req: Request) {
     .filter((e) => e.startDate >= startCutoff && e.startDate <= endCutoff)
     .sort(sortByStartDateAsc);
 
-  let eventsWithRelevance: EventItem[] = events;
-  let scoringDebug:
-    | {
-        attempted: number;
-        returned: number;
-        applied: number;
-        error?: string;
-      }
-    | undefined;
-
-  if (userProfile && events.length) {
-    const toScore = events.slice(0, 25);
-    const scoreSchema = {
-      type: "object",
-      required: ["scores"],
-      additionalProperties: false,
-      properties: {
-        scores: {
-          type: "array",
-          items: {
-            type: "object",
-            required: ["index", "relevance"],
-            additionalProperties: false,
-            properties: {
-              index: { type: "integer", minimum: 0, maximum: 24 },
-              relevance: { type: "integer", minimum: 1, maximum: 10 },
-            },
-          },
-        },
-      },
-    } as const;
-
-    const scoringPrompt = [
-      `You are rating event relevance for a user.`,
-      ``,
-      `User profile:`,
-      userProfile,
-      ``,
-      `Instructions:`,
-      `- For each event below, output an integer relevance from 1 (not relevant) to 10 (highly relevant).`,
-      `- Use the event's index to identify it.`,
-      `- Consider the user's stated interests, age group, preferences, and constraints.`,
-      `- Do not invent details. If unclear, choose a middle score (4-6).`,
-      ``,
-      `Events (JSON):`,
-      JSON.stringify(
-        toScore.map((e, index) => ({
-          index,
-          sourceUrl: e.sourceUrl,
-          name: e.name,
-          date: e.endDate ? `${e.startDate} -> ${e.endDate}` : e.startDate,
-          location: e.location,
-          audience: e.targetAudience,
-          summary: e.summary,
-        })),
-      ),
-    ].join("\n");
-
-    type AnswerOptions = Parameters<Exa["answer"]>[1];
-    type AnswerResponseLike = { answer?: unknown };
-
+  // Persist base events so the page has content on first load.
+  if (sql) {
     try {
-      const answerOpts = {
-        text: false,
-        outputSchema: scoreSchema,
-      } satisfies AnswerOptions;
-
-      const ans: unknown = await exa.answer(scoringPrompt, answerOpts);
-      const obj = parseJsonObjectMaybe((ans as AnswerResponseLike)?.answer);
-      const scoresArr = Array.isArray(obj?.scores) ? (obj!.scores as unknown[]) : [];
-      const scoreByIndex = new Map<number, number>();
-      for (const item of scoresArr) {
-        if (!item || typeof item !== "object") continue;
-        const it = item as Record<string, unknown>;
-        const idx = typeof it.index === "number" ? it.index : Number(it.index);
-        const rel = typeof it.relevance === "number" ? it.relevance : Number(it.relevance);
-        if (!Number.isFinite(idx) || idx < 0 || idx >= toScore.length) continue;
-        if (Number.isFinite(rel)) {
-          const rounded = Math.max(1, Math.min(10, Math.round(rel)));
-          scoreByIndex.set(Math.round(idx), rounded);
-        }
+      await ensureEventsTable(sql);
+      for (const e of events) {
+        const startDate = e.startDate;
+        const endDate = e.endDate ?? null;
+        await sql/* sql */ `
+          INSERT INTO events (
+            state, source_url, name, start_date, end_date,
+            location, target_audience, summary, image_url,
+            updated_at, last_seen_at
+          )
+          VALUES (
+            ${state}, ${e.sourceUrl}, ${e.name}, ${startDate}, ${endDate},
+            ${e.location}, ${e.targetAudience}, ${e.summary}, ${e.imageUrl ?? null},
+            NOW(), NOW()
+          )
+          ON CONFLICT (state, source_url) DO UPDATE SET
+            name = EXCLUDED.name,
+            start_date = EXCLUDED.start_date,
+            end_date = EXCLUDED.end_date,
+            location = EXCLUDED.location,
+            target_audience = EXCLUDED.target_audience,
+            summary = EXCLUDED.summary,
+            image_url = EXCLUDED.image_url,
+            updated_at = NOW(),
+            last_seen_at = NOW()
+        `;
       }
-
-      let applied = 0;
-      eventsWithRelevance = events.map((e, i) => {
-        if (i < toScore.length && scoreByIndex.has(i)) {
-          applied += 1;
-          return { ...e, relevance: scoreByIndex.get(i)! };
-        }
-        return e;
-      });
-      scoringDebug = {
-        attempted: toScore.length,
-        returned: scoresArr.length,
-        applied,
-      };
     } catch (err: unknown) {
-      // If relevance scoring fails, still return events without scores.
-      eventsWithRelevance = events;
-      scoringDebug = {
-        attempted: toScore.length,
-        returned: 0,
-        applied: 0,
-        error: err instanceof Error ? err.message : String(err),
-      };
+      dbWriteError = err instanceof Error ? err.message : String(err);
+      // Ignore persistence failures.
     }
   }
 
@@ -481,7 +530,7 @@ export async function POST(req: Request) {
     {
       state,
       fetchedAt: new Date().toISOString(),
-      events: eventsWithRelevance,
+      events,
       ...(process.env.NODE_ENV !== "production"
         ? {
             debug: {
@@ -489,8 +538,11 @@ export async function POST(req: Request) {
               searchResults: results.length,
               extracted: eventsRaw.length,
               kept: events.length,
-              scored: userProfile ? Math.min(25, events.length) : 0,
-              scoring: scoringDebug,
+              forceRefresh,
+              source: "exa",
+              ...(dbInitError ? { dbInitError } : {}),
+              ...(dbReadError ? { dbReadError } : {}),
+              ...(dbWriteError ? { dbWriteError } : {}),
             },
           }
         : {}),
