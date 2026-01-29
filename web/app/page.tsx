@@ -88,8 +88,13 @@ export default function Home() {
 
   const events = data?.events ?? [];
 
+  function openEvent(url: string) {
+    // Keep consistent with the "Event Name" link behavior: open in a new tab.
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
   return (
-    <main style={{ maxWidth: 900, margin: "32px auto", padding: 16 }}>
+    <main style={{ width: "100%", margin: "32px 0", padding: 16 }}>
       <h1 style={{ fontSize: 18, marginBottom: 8 }}>Exa Event Finder</h1>
       <p style={{ opacity: 0.8, marginBottom: 16 }}>
         Book fairs, comic cons, and related conventions in your state (next 6 months).
@@ -147,23 +152,118 @@ export default function Home() {
         </div>
       )}
 
-      <ol style={{ marginTop: 16, paddingLeft: 18, display: "grid", gap: 12 }}>
-        {events.map((e, idx) => (
-          <li key={`${e.sourceUrl}-${idx}`}>
-            <div style={{ fontWeight: 600 }}>{e.name}</div>
-            <div style={{ fontSize: 12, opacity: 0.85 }}>
-              <span>{formatDateRange(e)}</span> · <span>{e.location}</span> ·{" "}
-              <span>{e.targetAudience}</span>
-            </div>
-            <div style={{ marginTop: 6, fontSize: 13 }}>{e.summary}</div>
-            <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
-              <a href={e.sourceUrl} target="_blank" rel="noreferrer">
-                Source
-              </a>
-            </div>
-          </li>
-        ))}
-      </ol>
+      <div style={{ marginTop: 16, overflowX: "auto" }}>
+        <table className="eventsTable" style={{ borderCollapse: "collapse", minWidth: 720 }}>
+          <thead>
+            <tr>
+              <th
+                scope="col"
+                style={{
+                  textAlign: "left",
+                  fontSize: 12,
+                  opacity: 0.8,
+                  padding: "10px 8px",
+                  borderBottom: "1px solid rgba(127,127,127,0.35)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Date
+              </th>
+              <th
+                scope="col"
+                style={{
+                  textAlign: "left",
+                  fontSize: 12,
+                  opacity: 0.8,
+                  padding: "10px 8px",
+                  borderBottom: "1px solid rgba(127,127,127,0.35)",
+                }}
+              >
+                Event Name
+              </th>
+              <th
+                scope="col"
+                style={{
+                  textAlign: "left",
+                  fontSize: 12,
+                  opacity: 0.8,
+                  padding: "10px 8px",
+                  borderBottom: "1px solid rgba(127,127,127,0.35)",
+                }}
+              >
+                Address
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {events.length ? (
+              events.map((e, idx) => (
+                <tr
+                  key={`${e.sourceUrl}-${idx}`}
+                  className="eventsTableRowLink"
+                  role="link"
+                  tabIndex={0}
+                  aria-label={`Open ${e.name}`}
+                  onClick={() => openEvent(e.sourceUrl)}
+                  onKeyDown={(ev) => {
+                    if (ev.key === "Enter" || ev.key === " ") {
+                      ev.preventDefault();
+                      openEvent(e.sourceUrl);
+                    }
+                  }}
+                >
+                  <td
+                    style={{
+                      padding: "10px 8px",
+                      borderBottom: "1px solid rgba(127,127,127,0.2)",
+                      fontSize: 13,
+                      whiteSpace: "nowrap",
+                      verticalAlign: "top",
+                    }}
+                  >
+                    {formatDateRange(e)}
+                  </td>
+                  <td
+                    style={{
+                      padding: "10px 8px",
+                      borderBottom: "1px solid rgba(127,127,127,0.2)",
+                      fontSize: 13,
+                      verticalAlign: "top",
+                    }}
+                  >
+                    <a
+                      href={e.sourceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ textDecoration: "underline", textUnderlineOffset: 2 }}
+                      title={e.summary}
+                      onClick={(ev) => ev.stopPropagation()}
+                    >
+                      {e.name}
+                    </a>
+                  </td>
+                  <td
+                    style={{
+                      padding: "10px 8px",
+                      borderBottom: "1px solid rgba(127,127,127,0.2)",
+                      fontSize: 13,
+                      verticalAlign: "top",
+                    }}
+                  >
+                    {e.location}
+                  </td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={3} style={{ padding: "12px 8px", fontSize: 13, opacity: 0.8 }}>
+                  No events yet. Enter a state and press <b>Refresh now</b>.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </main>
   );
 }

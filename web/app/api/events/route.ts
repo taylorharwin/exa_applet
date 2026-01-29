@@ -17,6 +17,50 @@ function isIsoDateOnly(s: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
 
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+function toIsoDateOnlyFromUnknown(input: string): string | null {
+  const s = (input ?? "").trim();
+  if (!s) return null;
+  if (isIsoDateOnly(s)) return s;
+
+  // Common numeric formats: YYYY/MM/DD or YYYY-M-D
+  {
+    const m = s.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+    if (m) {
+      const y = Number(m[1]);
+      const mo = Number(m[2]);
+      const d = Number(m[3]);
+      const dt = new Date(Date.UTC(y, mo - 1, d));
+      if (!Number.isNaN(dt.getTime()) && dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1) {
+        return `${y}-${pad2(mo)}-${pad2(d)}`;
+      }
+    }
+  }
+
+  // Common US format: M/D/YYYY
+  {
+    const m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+    if (m) {
+      const mo = Number(m[1]);
+      const d = Number(m[2]);
+      const y = Number(m[3]);
+      const dt = new Date(Date.UTC(y, mo - 1, d));
+      if (!Number.isNaN(dt.getTime()) && dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1) {
+        return `${y}-${pad2(mo)}-${pad2(d)}`;
+      }
+    }
+  }
+
+  // Fallback: let JS parse (handles things like "March 12, 2026" or ISO datetimes)
+  const t = Date.parse(s);
+  if (!Number.isNaN(t)) return new Date(t).toISOString().slice(0, 10);
+
+  return null;
+}
+
 function toDateOnly(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
@@ -28,16 +72,24 @@ function sortByStartDateAsc(a: EventItem, b: EventItem): number {
 
 function normalizeEvent(e: EventItem): EventItem | null {
   const name = (e.name ?? "").trim();
-  const startDate = (e.startDate ?? "").trim();
-  const endDate = (e.endDate ?? "").trim();
+  const startDateRaw = (e.startDate ?? "").trim();
+  const endDateRaw = (e.endDate ?? "").trim();
   const location = (e.location ?? "").trim();
-  const targetAudience = (e.targetAudience ?? "").trim();
-  const summary = (e.summary ?? "").trim();
+  const targetAudienceRaw = (e.targetAudience ?? "").trim();
+  const summaryRaw = (e.summary ?? "").trim();
   const sourceUrl = (e.sourceUrl ?? "").trim();
 
-  if (!name || !location || !targetAudience || !summary || !sourceUrl) return null;
-  if (!isIsoDateOnly(startDate)) return null;
-  if (endDate && !isIsoDateOnly(endDate)) return null;
+  if (!name || !location || !sourceUrl) return null;
+
+  const startDate = toIsoDateOnlyFromUnknown(startDateRaw);
+  if (!startDate) return null;
+
+  const endDateParsed = endDateRaw ? toIsoDateOnlyFromUnknown(endDateRaw) : null;
+  const endDate =
+    endDateParsed && endDateParsed !== startDate ? endDateParsed : null;
+
+  const targetAudience = targetAudienceRaw || "all ages";
+  const summary = summaryRaw || "See source for details.";
 
   return {
     name,
@@ -73,7 +125,8 @@ export async function POST(req: Request) {
   }
 
   const now = new Date();
-  const startPublishedDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+  // Event pages are often published far in advance; don't over-bias to only recently published pages.
+  const startPublishedDate = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
   const startWindow = toDateOnly(now);
   const endWindow = toDateOnly(addMonths(now, 6));
 
@@ -127,12 +180,14 @@ export async function POST(req: Request) {
   } as const;
 
   const query = [
-    `Find upcoming events in ${state} (USA) related to book fairs, comic cons, and similar conventions.`,
+    `Find as many upcoming events as possible in ${state} (USA) related to comics and fandom.`,
+    `Include both big and small/local events.`,
+    `Treat these as relevant: "comic con", comic convention, comic book show, pop culture convention, fan expo, anime convention, sci-fi convention, fantasy convention, gaming convention, tabletop convention, manga/anime festival, geek fest, collectibles/toy show, artist alley events, and book fairs/festivals.`,
     `Return only events happening between ${startWindow} and ${endWindow}.`,
     `Use real sources (official event pages or reputable listings). Include a sourceUrl for each event.`,
     `If an event spans multiple days, set startDate and endDate. Otherwise set only startDate.`,
     `TargetAudience should be a short label like "all ages", "families", "adults", "kids", "teens".`,
-    `Keep summaries concise.`,
+    `Keep summaries concise. Return many results if available (aim for 20-40).`,
   ].join(" ");
 
   let answer: unknown;

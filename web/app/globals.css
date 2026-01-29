@@ -35,6 +35,24 @@ a {
   text-decoration: none;
 }
 
+/* Events table */
+.eventsTable {
+  width: 100%;
+}
+
+.eventsTableRowLink {
+  cursor: pointer;
+}
+
+.eventsTableRowLink:hover {
+  background: rgba(127, 127, 127, 0.12);
+}
+
+.eventsTableRowLink:focus-visible {
+  outline: 2px solid rgba(127, 127, 127, 0.6);
+  outline-offset: -2px;
+}
+
 @media (prefers-color-scheme: dark) {
   html {
     color-scheme: dark;
