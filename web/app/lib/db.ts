@@ -6,8 +6,12 @@ declare global {
 }
 
 function getDatabaseUrl(): string {
-  // Support common Postgres env var names (Vercel/Neon/etc).
-  // Prefer non-pooling URLs when available (more reliable for local dev).
+  /**
+   * Support common Postgres env var names (Vercel/Neon/etc).
+   *
+   * - Prefer `DATABASE_URL_UNPOOLED` when present (Neon "direct" connection)
+   * - Otherwise fall back to pooling URLs (works with pgBouncer as long as `prepare: false`)
+   */
   return (
     process.env.DATABASE_URL_UNPOOLED ||
     process.env.DATABASE_URL ||

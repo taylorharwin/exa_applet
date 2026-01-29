@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { EventItem, EventsResponse } from "@/app/lib/types";
+import { US_STATES } from "@/app/lib/usStates";
 
 function formatDateRange(e: EventItem): string {
   return e.endDate && e.endDate !== e.startDate ? `${e.startDate} → ${e.endDate}` : e.startDate;
@@ -12,60 +13,6 @@ function fmtDateTime(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
-
-const US_STATES: Array<{ code: string; name: string }> = [
-  { code: "AL", name: "Alabama" },
-  { code: "AK", name: "Alaska" },
-  { code: "AZ", name: "Arizona" },
-  { code: "AR", name: "Arkansas" },
-  { code: "CA", name: "California" },
-  { code: "CO", name: "Colorado" },
-  { code: "CT", name: "Connecticut" },
-  { code: "DE", name: "Delaware" },
-  { code: "DC", name: "District of Columbia" },
-  { code: "FL", name: "Florida" },
-  { code: "GA", name: "Georgia" },
-  { code: "HI", name: "Hawaii" },
-  { code: "ID", name: "Idaho" },
-  { code: "IL", name: "Illinois" },
-  { code: "IN", name: "Indiana" },
-  { code: "IA", name: "Iowa" },
-  { code: "KS", name: "Kansas" },
-  { code: "KY", name: "Kentucky" },
-  { code: "LA", name: "Louisiana" },
-  { code: "ME", name: "Maine" },
-  { code: "MD", name: "Maryland" },
-  { code: "MA", name: "Massachusetts" },
-  { code: "MI", name: "Michigan" },
-  { code: "MN", name: "Minnesota" },
-  { code: "MS", name: "Mississippi" },
-  { code: "MO", name: "Missouri" },
-  { code: "MT", name: "Montana" },
-  { code: "NE", name: "Nebraska" },
-  { code: "NV", name: "Nevada" },
-  { code: "NH", name: "New Hampshire" },
-  { code: "NJ", name: "New Jersey" },
-  { code: "NM", name: "New Mexico" },
-  { code: "NY", name: "New York" },
-  { code: "NC", name: "North Carolina" },
-  { code: "ND", name: "North Dakota" },
-  { code: "OH", name: "Ohio" },
-  { code: "OK", name: "Oklahoma" },
-  { code: "OR", name: "Oregon" },
-  { code: "PA", name: "Pennsylvania" },
-  { code: "RI", name: "Rhode Island" },
-  { code: "SC", name: "South Carolina" },
-  { code: "SD", name: "South Dakota" },
-  { code: "TN", name: "Tennessee" },
-  { code: "TX", name: "Texas" },
-  { code: "UT", name: "Utah" },
-  { code: "VT", name: "Vermont" },
-  { code: "VA", name: "Virginia" },
-  { code: "WA", name: "Washington" },
-  { code: "WV", name: "West Virginia" },
-  { code: "WI", name: "Wisconsin" },
-  { code: "WY", name: "Wyoming" },
-];
 
 export default function Home() {
   const [stateInput, setStateInput] = useState("CA");
@@ -77,6 +24,12 @@ export default function Home() {
   const didInitialFetchRef = useRef(false);
 
   const stateTrimmed = useMemo(() => stateInput.trim(), [stateInput]);
+
+  function extractApiErrorMessage(payload: unknown): string | null {
+    if (!payload || typeof payload !== "object") return null;
+    const rec = payload as Record<string, unknown>;
+    return typeof rec.error === "string" ? rec.error : null;
+  }
 
   async function refreshNow(opts?: { forceRefresh?: boolean }) {
     const state = stateTrimmed;
@@ -93,13 +46,13 @@ export default function Home() {
           forceRefresh: Boolean(opts?.forceRefresh),
         }),
       });
-      const json = (await res.json()) as any;
+      const json: unknown = await res.json();
       if (!res.ok) {
-        throw new Error(json?.error || `Request failed (${res.status})`);
+        throw new Error(extractApiErrorMessage(json) ?? `Request failed (${res.status})`);
       }
       setData(json as EventsResponse);
-    } catch (e: any) {
-      setError(String(e?.message ?? e));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -119,7 +72,7 @@ export default function Home() {
 
   return (
     <main className="app">
-      <section className="card" style={{ padding: 16 }}>
+      <section className="card cardPad">
         <div className="header">
           <div>
             <h1 className="title">Exa Event Finder</h1>
@@ -161,13 +114,14 @@ export default function Home() {
         <div className="statusLine">
           Fetched {fmtDateTime(data.fetchedAt)} for <b>{data.state}</b>. {events.length} events.
           {data.debug && typeof data.debug === "object" ? (
-            <div style={{ marginTop: 6 }}>
-              Debug:{" "}
-              {Object.entries(data.debug as Record<string, unknown>)
-                .slice(0, 6)
-                .map(([k, v]) => `${k}=${String(v)}`)
-                .join(" · ")}
-            </div>
+            <details className="debugDetails">
+              <summary>Debug</summary>
+              <div className="debugBlock">
+                {Object.entries(data.debug as Record<string, unknown>)
+                  .map(([k, v]) => `${k}: ${String(v)}`)
+                  .join("\n")}
+              </div>
+            </details>
           ) : null}
         </div>
       ) : (
@@ -194,6 +148,7 @@ export default function Home() {
 
                 {e.imageUrl ? (
                   <div className="eventCardImageWrap">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       className="eventCardImage"
                       src={e.imageUrl}

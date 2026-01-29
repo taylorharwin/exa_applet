@@ -61,6 +61,10 @@ a {
   box-shadow: var(--shadow);
 }
 
+.cardPad {
+  padding: 16px;
+}
+
 .header {
   display: flex;
   align-items: baseline;
@@ -162,6 +166,33 @@ a {
   color: var(--muted);
   font-size: 14px;
   font-weight: 700;
+}
+
+.debugDetails {
+  margin-top: 10px;
+}
+
+.debugDetails summary {
+  cursor: pointer;
+  user-select: none;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 12px;
+}
+
+.debugBlock {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 2px solid rgba(11, 15, 25, 0.12);
+  border-radius: 12px;
+  background: rgba(11, 15, 25, 0.03);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: rgba(11, 15, 25, 0.82);
 }
 
 .error {
